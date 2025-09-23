@@ -215,6 +215,15 @@ const uploadImageToPinata = async (imagePath) => {
       throw new Error(`Image file not found: ${imagePath}`);
     }
 
+    // Check file size - Railway might have memory limits
+    const stats = fs.statSync(fullPath);
+    console.log(`Image file size: ${stats.size} bytes`);
+    
+    // If file is too large, compress it or reject it
+    if (stats.size > 10 * 1024 * 1024) { // 10MB limit
+      throw new Error(`Image file too large: ${stats.size} bytes. Maximum 10MB allowed.`);
+    }
+
     const data = new FormData();
     data.append("file", fs.createReadStream(fullPath));
     data.append(
@@ -235,12 +244,18 @@ const uploadImageToPinata = async (imagePath) => {
       })
     );
 
-    console.log("FIXED: Uploading image to Pinata IPFS...");
+    console.log("Uploading image to Pinata IPFS (Railway optimized)...");
 
-    // Try JWT authentication first
-    let response;
+    // CRITICAL: Much shorter timeout for Railway
+    const RAILWAY_TIMEOUT = 15000; // 15 seconds only
+    
+    // Create AbortController for manual timeout control
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), RAILWAY_TIMEOUT);
+
     try {
-      response = await axios.post(
+      // Try JWT first with Railway-optimized settings
+      const response = await axios.post(
         "https://api.pinata.cloud/pinning/pinFileToIPFS",
         data,
         {
@@ -248,112 +263,162 @@ const uploadImageToPinata = async (imagePath) => {
             Authorization: `Bearer ${PINATA_JWT}`,
             ...data.getHeaders(),
           },
-          timeout: 60000,
+          timeout: RAILWAY_TIMEOUT,
+          signal: controller.signal,
+          maxRedirects: 0, // Disable redirects
+          maxContentLength: 50 * 1024 * 1024, // 50MB
+          maxBodyLength: 50 * 1024 * 1024, // 50MB
         }
       );
-    } catch (jwtError) {
-      console.warn("FIXED: JWT failed, trying API key method...");
 
-      // Fallback to API key authentication
-      response = await axios.post(
-        "https://api.pinata.cloud/pinning/pinFileToIPFS",
-        data,
-        {
-          headers: {
-            pinata_api_key: PINATA_API_KEY,
-            pinata_secret_api_key: PINATA_SECRET_API_KEY,
-            ...data.getHeaders(),
-          },
-          timeout: 60000,
-        }
-      );
+      clearTimeout(timeoutId);
+      console.log("Image uploaded to IPFS successfully:", response.data.IpfsHash);
+      return response.data.IpfsHash;
+
+    } catch (jwtError) {
+      clearTimeout(timeoutId);
+      console.warn("JWT method failed, trying API key...");
+      
+      // If JWT fails, try API key method with fresh timeout
+      const controller2 = new AbortController();
+      const timeoutId2 = setTimeout(() => controller2.abort(), RAILWAY_TIMEOUT);
+
+      try {
+        const response = await axios.post(
+          "https://api.pinata.cloud/pinning/pinFileToIPFS",
+          data,
+          {
+            headers: {
+              pinata_api_key: PINATA_API_KEY,
+              pinata_secret_api_key: PINATA_SECRET_API_KEY,
+              ...data.getHeaders(),
+            },
+            timeout: RAILWAY_TIMEOUT,
+            signal: controller2.signal,
+            maxRedirects: 0,
+            maxContentLength: 50 * 1024 * 1024,
+            maxBodyLength: 50 * 1024 * 1024,
+          }
+        );
+
+        clearTimeout(timeoutId2);
+        console.log("Image uploaded via API key:", response.data.IpfsHash);
+        return response.data.IpfsHash;
+
+      } catch (apiError) {
+        clearTimeout(timeoutId2);
+        throw apiError;
+      }
     }
 
-    console.log(
-      "FIXED: Image uploaded to IPFS successfully:",
-      response.data.IpfsHash
-    );
-    return response.data.IpfsHash;
   } catch (error) {
-    console.error("FIXED: Error uploading image to IPFS:", error.message);
-    console.error("Response data:", error.response?.data);
-    throw error;
-  }
-};
-
-const uploadMetadataToPinata = async (metadata) => {
-  try {
-    console.log("FIXED: Uploading metadata to Pinata IPFS...");
-
-    // Try JWT authentication first
-    let response;
-    try {
-      response = await axios.post(
-        "https://api.pinata.cloud/pinning/pinJSONToIPFS",
-        metadata,
-        {
-          headers: {
-            Authorization: `Bearer ${PINATA_JWT}`,
-            "Content-Type": "application/json",
-          },
-          timeout: 30000,
-        }
-      );
-    } catch (jwtError) {
-      console.warn("FIXED: JWT failed for metadata, trying API key method...");
-
-      // Fallback to API key authentication
-      response = await axios.post(
-        "https://api.pinata.cloud/pinning/pinJSONToIPFS",
-        metadata,
-        {
-          headers: {
-            pinata_api_key: PINATA_API_KEY,
-            pinata_secret_api_key: PINATA_SECRET_API_KEY,
-            "Content-Type": "application/json",
-          },
-          timeout: 30000,
-        }
-      );
-    }
-
-    console.log(
-      "FIXED: Metadata uploaded to IPFS successfully:",
-      response.data.IpfsHash
-    );
-    return response.data.IpfsHash;
-  } catch (error) {
-    console.error("FIXED: Error uploading metadata to IPFS:", error.message);
-    console.error("Response data:", error.response?.data);
+    console.error("Image upload failed:", {
+      message: error.message,
+      code: error.code,
+      isTimeout: error.code === 'ECONNABORTED' || error.message.includes('timeout'),
+      isAborted: error.name === 'AbortError',
+    });
     throw error;
   }
 };
 
 /**
- * Enhanced NFT metadata generation with working IPFS
+ * Railway-optimized metadata upload
+ */
+const uploadMetadataToPinata = async (metadata) => {
+  try {
+    console.log("Uploading metadata to Pinata IPFS (Railway optimized)...");
+
+    // CRITICAL: Much shorter timeout for Railway
+    const RAILWAY_TIMEOUT = 10000; // 10 seconds only
+
+    // Create AbortController for manual timeout control
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), RAILWAY_TIMEOUT);
+
+    try {
+      // Try JWT first
+      const response = await axios.post(
+        "https://api.pinata.cloud/pinning/pinJSONToIPFS",
+        metadata,
+        {
+          headers: {
+            Authorization: `Bearer ${PINATA_JWT}`,
+            "Content-Type": "application/json",
+          },
+          timeout: RAILWAY_TIMEOUT,
+          signal: controller.signal,
+          maxRedirects: 0,
+        }
+      );
+
+      clearTimeout(timeoutId);
+      console.log("Metadata uploaded to IPFS successfully:", response.data.IpfsHash);
+      return response.data.IpfsHash;
+
+    } catch (jwtError) {
+      clearTimeout(timeoutId);
+      console.warn("JWT metadata upload failed, trying API key...");
+
+      // Try API key method with fresh timeout
+      const controller2 = new AbortController();
+      const timeoutId2 = setTimeout(() => controller2.abort(), RAILWAY_TIMEOUT);
+
+      try {
+        const response = await axios.post(
+          "https://api.pinata.cloud/pinning/pinJSONToIPFS",
+          metadata,
+          {
+            headers: {
+              pinata_api_key: PINATA_API_KEY,
+              pinata_secret_api_key: PINATA_SECRET_API_KEY,
+              "Content-Type": "application/json",
+            },
+            timeout: RAILWAY_TIMEOUT,
+            signal: controller2.signal,
+            maxRedirects: 0,
+          }
+        );
+
+        clearTimeout(timeoutId2);
+        console.log("Metadata uploaded via API key:", response.data.IpfsHash);
+        return response.data.IpfsHash;
+
+      } catch (apiError) {
+        clearTimeout(timeoutId2);
+        throw apiError;
+      }
+    }
+
+  } catch (error) {
+    console.error("Metadata upload failed:", {
+      message: error.message,
+      code: error.code,
+      isTimeout: error.code === 'ECONNABORTED' || error.message.includes('timeout'),
+      isAborted: error.name === 'AbortError',
+    });
+    throw error;
+  }
+};
+
+/**
+ * Enhanced NFT metadata generation with Railway timeout fixes
  */
 const generateWatchNFTMetadata = async (watchData) => {
   try {
-    console.log(
-      "FIXED: Generating NFT metadata with enhanced image handling:",
-      watchData.watchId
-    );
+    console.log("Generating NFT metadata with Railway optimizations:", watchData.watchId);
 
-    // CRITICAL FIX: Enhanced image validation before processing
+    // Enhanced image validation
     if (!watchData.image || watchData.image.trim() === "") {
       throw new Error("No valid image provided for NFT generation");
     }
 
-    const imagePath = path.join(
-      __dirname,
-      "public/uploads/watch",
-      watchData.image
-    );
+    const imagePath = path.join(__dirname, "public/uploads/watch", watchData.image);
     if (!fs.existsSync(imagePath)) {
       throw new Error(`Image file not found: ${imagePath}`);
     }
 
-    console.log("FIXED: Image validation passed for NFT generation");
+    console.log("Image file validated for NFT generation");
 
     // Get component details
     const componentDetails = [];
@@ -371,28 +436,48 @@ const generateWatchNFTMetadata = async (watchData) => {
           componentDetails.push(componentResult.rows[0]);
         }
       } catch (error) {
-        console.error(`FIXED: Error fetching component ${componentId}:`, error);
+        console.error(`Error fetching component ${componentId}:`, error);
       }
     }
 
-    // FIXED: Enhanced IPFS upload with better error handling
+    // Get dynamic base URL for Railway
+    const getBaseUrl = () => {
+      if (process.env.RAILWAY_STATIC_URL) {
+        return process.env.RAILWAY_STATIC_URL;
+      }
+      if (process.env.RAILWAY_PUBLIC_DOMAIN) {
+        return `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`;
+      }
+      // You need to replace this with your actual Railway domain
+      return process.env.NODE_ENV === 'production' 
+        ? `https://your-railway-app.up.railway.app` // REPLACE THIS
+        : `http://localhost:${process.env.PORT || 5000}`;
+    };
+
+    const baseUrl = getBaseUrl();
+
+    // ENHANCED: Try IPFS upload with quick timeout, fallback immediately
     let imageIpfsHash;
     let imageURI;
 
     try {
-      console.log("FIXED: Attempting IPFS upload for image:", watchData.image);
-      imageIpfsHash = await uploadImageToPinata(watchData.image);
-      imageURI = `ipfs://${imageIpfsHash}`;
-      console.log("FIXED: IPFS upload successful:", imageURI);
-    } catch (imageError) {
-      console.warn(
-        "FIXED: IPFS image upload failed, using local fallback:",
-        imageError.message
+      console.log("Attempting quick IPFS upload for image:", watchData.image);
+      
+      // Set a promise race with manual timeout
+      const uploadPromise = uploadImageToPinata(watchData.image);
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Manual timeout after 20 seconds')), 20000)
       );
-      imageIpfsHash = `LOCAL_${Date.now()}_${Math.random()
-        .toString(36)
-        .substring(7)}`;
-      imageURI = `http://localhost:5000/file/watch/${watchData.image}`;
+
+      imageIpfsHash = await Promise.race([uploadPromise, timeoutPromise]);
+      imageURI = `ipfs://${imageIpfsHash}`;
+      console.log("IPFS upload successful:", imageURI);
+
+    } catch (imageError) {
+      console.warn("IPFS image upload failed quickly, using local fallback:", imageError.message);
+      imageIpfsHash = `LOCAL_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+      imageURI = `${baseUrl}/file/watch/${watchData.image}`;
+      console.log("Using local fallback image URI:", imageURI);
     }
 
     // Generate comprehensive metadata
@@ -401,8 +486,8 @@ const generateWatchNFTMetadata = async (watchData) => {
       description: `Certified luxury timepiece with full supply chain traceability. Assembled on ${
         new Date().toISOString().split("T")[0]
       } with ${componentDetails.length} certified components.`,
-      image: imageURI, // FIXED: Use determined image URI
-      external_url: `https://yourapp.com/watch/${watchData.watchId}`,
+      image: imageURI,
+      external_url: `${baseUrl}/watch/${watchData.watchId}`,
       animation_url: null,
 
       // Standard NFT attributes
@@ -438,9 +523,7 @@ const generateWatchNFTMetadata = async (watchData) => {
         },
         {
           trait_type: "IPFS Storage",
-          value: imageIpfsHash.startsWith("LOCAL_")
-            ? "Local Fallback"
-            : "Pinata IPFS",
+          value: imageIpfsHash.startsWith("LOCAL_") ? "Local Fallback" : "Pinata IPFS",
         },
       ],
 
@@ -453,8 +536,7 @@ const generateWatchNFTMetadata = async (watchData) => {
           manufacturer: comp.manufacturer_address,
           material_type: comp.material_type,
           origin: comp.origin,
-          certification_status:
-            comp.status === "1" ? "Certified" : "Not Certified",
+          certification_status: comp.status === "1" ? "Certified" : "Not Certified",
           raw_material_id: comp.raw_material_id,
         })),
         assembly: {
@@ -481,28 +563,35 @@ const generateWatchNFTMetadata = async (watchData) => {
         token_standard: "ERC-721",
         minted_by: watchData.assemblerAddress,
         minting_timestamp: new Date().toISOString(),
-        storage_provider: imageIpfsHash.startsWith("LOCAL_")
-          ? "Local with IPFS Fallback"
-          : "Pinata IPFS",
+        storage_provider: imageIpfsHash.startsWith("LOCAL_") ? "Local with IPFS Fallback" : "Pinata IPFS",
       },
     };
 
-    // Upload metadata to IPFS
+    // ENHANCED: Try metadata upload with quick timeout, fallback immediately
     let metadataIpfsHash;
     let metadataURI;
 
     try {
-      metadataIpfsHash = await uploadMetadataToPinata(metadata);
+      console.log("Attempting quick metadata upload to IPFS...");
+      
+      // Set a promise race with manual timeout
+      const uploadPromise = uploadMetadataToPinata(metadata);
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Manual timeout after 15 seconds')), 15000)
+      );
+
+      metadataIpfsHash = await Promise.race([uploadPromise, timeoutPromise]);
       metadataURI = `ipfs://${metadataIpfsHash}`;
-      console.log("FIXED: Metadata uploaded to IPFS:", metadataURI);
+      console.log("Metadata uploaded to IPFS:", metadataURI);
+
     } catch (metadataError) {
-      console.warn("FIXED: IPFS metadata upload failed, using local fallback");
+      console.warn("IPFS metadata upload failed quickly, using local fallback");
 
       // Save metadata locally as backup
       const timestamp = Date.now();
       const random = Math.random().toString(36).substring(7);
       metadataIpfsHash = `LOCAL_META_${timestamp}_${random}`;
-      metadataURI = `http://localhost:5000/local-metadata/${metadataIpfsHash}`;
+      metadataURI = `${baseUrl}/local-metadata/${metadataIpfsHash}`;
 
       const metadataDir = path.join(__dirname, "local_metadata");
       if (!fs.existsSync(metadataDir)) {
@@ -511,9 +600,10 @@ const generateWatchNFTMetadata = async (watchData) => {
 
       const metadataPath = path.join(metadataDir, `${metadataIpfsHash}.json`);
       fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
+      console.log("Metadata saved locally:", metadataPath);
     }
 
-    console.log("FIXED: NFT metadata generation completed successfully");
+    console.log("NFT metadata generation completed successfully");
 
     return {
       metadataURI: metadataURI,
@@ -523,19 +613,64 @@ const generateWatchNFTMetadata = async (watchData) => {
         metadata: metadataIpfsHash,
         image: imageIpfsHash,
       },
-      isLocalFallback:
-        metadataIpfsHash.startsWith("LOCAL_") ||
-        imageIpfsHash.startsWith("LOCAL_"),
-      storageProvider: metadataIpfsHash.startsWith("LOCAL_")
-        ? "Local with IPFS Fallback"
-        : "Pinata IPFS",
+      isLocalFallback: metadataIpfsHash.startsWith("LOCAL_") || imageIpfsHash.startsWith("LOCAL_"),
+      storageProvider: metadataIpfsHash.startsWith("LOCAL_") ? "Local with IPFS Fallback" : "Pinata IPFS",
     };
   } catch (error) {
-    console.error("FIXED: Error generating NFT metadata:", error);
+    console.error("Error generating NFT metadata:", error);
     throw error;
   }
 };
 
+// =============================================================================
+// RAILWAY QUICK TEST ENDPOINT
+// =============================================================================
+
+app.get("/test-railway-ipfs", async (req, res) => {
+  try {
+    console.log("Testing IPFS upload with Railway-optimized settings...");
+
+    const testData = {
+      test: true,
+      message: "Railway timeout test",
+      timestamp: new Date().toISOString(),
+    };
+
+    // Test with very short timeout
+    const startTime = Date.now();
+    
+    try {
+      const result = await uploadMetadataToPinata(testData);
+      const endTime = Date.now();
+      
+      res.json({
+        success: true,
+        message: "Railway IPFS test successful",
+        duration: `${endTime - startTime}ms`,
+        ipfsHash: result,
+        ipfsUrl: `ipfs://${result}`,
+        gatewayUrl: `https://gateway.pinata.cloud/ipfs/${result}`,
+      });
+    } catch (error) {
+      const endTime = Date.now();
+      
+      res.json({
+        success: false,
+        message: "Railway IPFS test failed",
+        duration: `${endTime - startTime}ms`,
+        error: error.message,
+        errorCode: error.code,
+        isTimeout: error.code === 'ECONNABORTED' || error.message.includes('timeout'),
+      });
+    }
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Test failed",
+      error: error.message,
+    });
+  }
+});
 // =============================================================================
 // LOCAL METADATA SERVING ENDPOINT
 // =============================================================================
@@ -1382,104 +1517,6 @@ app.post("/upload/certifier", upload.certifier.single("image"), (req, res) => {
   res.json({
     filename: req.file.filename,
     message: "Certifier image uploaded successfully",
-  });
-});
-
-// =============================================================================
-// FILE SERVING ENDPOINTS
-// =============================================================================
-
-app.get("/file/profile/:fileName", function (req, res) {
-  const { fileName } = req.params;
-  const filePath = path.join(__dirname, "public/uploads/profile", fileName);
-  res.sendFile(filePath, (err) => {
-    if (err) {
-      console.log("Error sending profile image:", err);
-      res.status(404).send("Image not found");
-    }
-  });
-});
-
-app.get("/file/raw-material/:fileName", function (req, res) {
-  const { fileName } = req.params;
-  const filePath = path.join(
-    __dirname,
-    "public/uploads/raw-material",
-    fileName
-  );
-  res.sendFile(filePath, (err) => {
-    if (err) {
-      console.log("Error sending raw material image:", err);
-      res.status(404).send("Image not found");
-    }
-  });
-});
-
-app.get("/file/component/:fileName", function (req, res) {
-  const { fileName } = req.params;
-  const filePath = path.join(__dirname, "public/uploads/component", fileName);
-  res.sendFile(filePath, (err) => {
-    if (err) {
-      console.log("Error sending component image:", err);
-      res.status(404).send("Image not found");
-    }
-  });
-});
-
-app.get("/file/watch/:fileName", function (req, res) {
-  const { fileName } = req.params;
-  console.log("FIXED: Serving watch image:", fileName);
-
-  // FIXED: Enhanced validation and path handling
-  if (
-    !fileName ||
-    fileName.trim() === "" ||
-    fileName === "null" ||
-    fileName === "undefined"
-  ) {
-    console.log("FIXED: Invalid filename:", fileName);
-    return res.status(400).json({
-      error: "Invalid filename",
-      filename: fileName,
-    });
-  }
-
-  const filePath = path.join(__dirname, "public/uploads/watch", fileName);
-  console.log("FIXED: Full file path:", filePath);
-
-  // FIXED: Check file existence before attempting to serve
-  if (!fs.existsSync(filePath)) {
-    console.log("FIXED: File not found:", filePath);
-    return res.status(404).json({
-      error: "Image not found",
-      filename: fileName,
-      path: filePath,
-      suggestion: "Check if the file was uploaded correctly",
-    });
-  }
-
-  // FIXED: Enhanced file serving with proper error handling
-  res.sendFile(filePath, (err) => {
-    if (err) {
-      console.error("FIXED: Error sending watch image:", err);
-      res.status(500).json({
-        error: "Error serving image",
-        filename: fileName,
-        details: err.message,
-      });
-    } else {
-      console.log("FIXED: Successfully served image:", fileName);
-    }
-  });
-});
-app.get("/file/certifier/:fileName", function (req, res) {
-  const { fileName } = req.params;
-  const filePath = path.join(__dirname, "public/uploads/certifier", fileName);
-  res.sendFile(filePath, (err) => {
-    if (err) {
-      console.log("Error sending certifier image:", err);
-      res.status(404).send("Image not found");
-    }
   });
 });
 
