@@ -218,10 +218,13 @@ const uploadImageToPinata = async (imagePath) => {
     // Check file size - Railway might have memory limits
     const stats = fs.statSync(fullPath);
     console.log(`Image file size: ${stats.size} bytes`);
-    
+
     // If file is too large, compress it or reject it
-    if (stats.size > 10 * 1024 * 1024) { // 10MB limit
-      throw new Error(`Image file too large: ${stats.size} bytes. Maximum 10MB allowed.`);
+    if (stats.size > 10 * 1024 * 1024) {
+      // 10MB limit
+      throw new Error(
+        `Image file too large: ${stats.size} bytes. Maximum 10MB allowed.`
+      );
     }
 
     const data = new FormData();
@@ -248,7 +251,7 @@ const uploadImageToPinata = async (imagePath) => {
 
     // CRITICAL: Much shorter timeout for Railway
     const RAILWAY_TIMEOUT = 15000; // 15 seconds only
-    
+
     // Create AbortController for manual timeout control
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), RAILWAY_TIMEOUT);
@@ -272,13 +275,15 @@ const uploadImageToPinata = async (imagePath) => {
       );
 
       clearTimeout(timeoutId);
-      console.log("Image uploaded to IPFS successfully:", response.data.IpfsHash);
+      console.log(
+        "Image uploaded to IPFS successfully:",
+        response.data.IpfsHash
+      );
       return response.data.IpfsHash;
-
     } catch (jwtError) {
       clearTimeout(timeoutId);
       console.warn("JWT method failed, trying API key...");
-      
+
       // If JWT fails, try API key method with fresh timeout
       const controller2 = new AbortController();
       const timeoutId2 = setTimeout(() => controller2.abort(), RAILWAY_TIMEOUT);
@@ -304,19 +309,18 @@ const uploadImageToPinata = async (imagePath) => {
         clearTimeout(timeoutId2);
         console.log("Image uploaded via API key:", response.data.IpfsHash);
         return response.data.IpfsHash;
-
       } catch (apiError) {
         clearTimeout(timeoutId2);
         throw apiError;
       }
     }
-
   } catch (error) {
     console.error("Image upload failed:", {
       message: error.message,
       code: error.code,
-      isTimeout: error.code === 'ECONNABORTED' || error.message.includes('timeout'),
-      isAborted: error.name === 'AbortError',
+      isTimeout:
+        error.code === "ECONNABORTED" || error.message.includes("timeout"),
+      isAborted: error.name === "AbortError",
     });
     throw error;
   }
@@ -353,9 +357,11 @@ const uploadMetadataToPinata = async (metadata) => {
       );
 
       clearTimeout(timeoutId);
-      console.log("Metadata uploaded to IPFS successfully:", response.data.IpfsHash);
+      console.log(
+        "Metadata uploaded to IPFS successfully:",
+        response.data.IpfsHash
+      );
       return response.data.IpfsHash;
-
     } catch (jwtError) {
       clearTimeout(timeoutId);
       console.warn("JWT metadata upload failed, trying API key...");
@@ -383,19 +389,18 @@ const uploadMetadataToPinata = async (metadata) => {
         clearTimeout(timeoutId2);
         console.log("Metadata uploaded via API key:", response.data.IpfsHash);
         return response.data.IpfsHash;
-
       } catch (apiError) {
         clearTimeout(timeoutId2);
         throw apiError;
       }
     }
-
   } catch (error) {
     console.error("Metadata upload failed:", {
       message: error.message,
       code: error.code,
-      isTimeout: error.code === 'ECONNABORTED' || error.message.includes('timeout'),
-      isAborted: error.name === 'AbortError',
+      isTimeout:
+        error.code === "ECONNABORTED" || error.message.includes("timeout"),
+      isAborted: error.name === "AbortError",
     });
     throw error;
   }
@@ -406,14 +411,21 @@ const uploadMetadataToPinata = async (metadata) => {
  */
 const generateWatchNFTMetadata = async (watchData) => {
   try {
-    console.log("Generating NFT metadata with Railway optimizations:", watchData.watchId);
+    console.log(
+      "Generating NFT metadata with Railway optimizations:",
+      watchData.watchId
+    );
 
     // Enhanced image validation
     if (!watchData.image || watchData.image.trim() === "") {
       throw new Error("No valid image provided for NFT generation");
     }
 
-    const imagePath = path.join(__dirname, "public/uploads/watch", watchData.image);
+    const imagePath = path.join(
+      __dirname,
+      "public/uploads/watch",
+      watchData.image
+    );
     if (!fs.existsSync(imagePath)) {
       throw new Error(`Image file not found: ${imagePath}`);
     }
@@ -449,8 +461,8 @@ const generateWatchNFTMetadata = async (watchData) => {
         return `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`;
       }
       // You need to replace this with your actual Railway domain
-      return process.env.NODE_ENV === 'production' 
-        ? `https://your-railway-app.up.railway.app` // REPLACE THIS
+      return process.env.NODE_ENV === "production"
+        ? `https://fyp-luxury-watch-production.up.railway.app` // REPLACE THIS
         : `http://localhost:${process.env.PORT || 5000}`;
     };
 
@@ -462,20 +474,27 @@ const generateWatchNFTMetadata = async (watchData) => {
 
     try {
       console.log("Attempting quick IPFS upload for image:", watchData.image);
-      
+
       // Set a promise race with manual timeout
       const uploadPromise = uploadImageToPinata(watchData.image);
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Manual timeout after 20 seconds')), 20000)
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error("Manual timeout after 20 seconds")),
+          20000
+        )
       );
 
       imageIpfsHash = await Promise.race([uploadPromise, timeoutPromise]);
       imageURI = `ipfs://${imageIpfsHash}`;
       console.log("IPFS upload successful:", imageURI);
-
     } catch (imageError) {
-      console.warn("IPFS image upload failed quickly, using local fallback:", imageError.message);
-      imageIpfsHash = `LOCAL_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+      console.warn(
+        "IPFS image upload failed quickly, using local fallback:",
+        imageError.message
+      );
+      imageIpfsHash = `LOCAL_${Date.now()}_${Math.random()
+        .toString(36)
+        .substring(7)}`;
       imageURI = `${baseUrl}/file/watch/${watchData.image}`;
       console.log("Using local fallback image URI:", imageURI);
     }
@@ -523,7 +542,9 @@ const generateWatchNFTMetadata = async (watchData) => {
         },
         {
           trait_type: "IPFS Storage",
-          value: imageIpfsHash.startsWith("LOCAL_") ? "Local Fallback" : "Pinata IPFS",
+          value: imageIpfsHash.startsWith("LOCAL_")
+            ? "Local Fallback"
+            : "Pinata IPFS",
         },
       ],
 
@@ -536,7 +557,8 @@ const generateWatchNFTMetadata = async (watchData) => {
           manufacturer: comp.manufacturer_address,
           material_type: comp.material_type,
           origin: comp.origin,
-          certification_status: comp.status === "1" ? "Certified" : "Not Certified",
+          certification_status:
+            comp.status === "1" ? "Certified" : "Not Certified",
           raw_material_id: comp.raw_material_id,
         })),
         assembly: {
@@ -563,7 +585,9 @@ const generateWatchNFTMetadata = async (watchData) => {
         token_standard: "ERC-721",
         minted_by: watchData.assemblerAddress,
         minting_timestamp: new Date().toISOString(),
-        storage_provider: imageIpfsHash.startsWith("LOCAL_") ? "Local with IPFS Fallback" : "Pinata IPFS",
+        storage_provider: imageIpfsHash.startsWith("LOCAL_")
+          ? "Local with IPFS Fallback"
+          : "Pinata IPFS",
       },
     };
 
@@ -573,17 +597,19 @@ const generateWatchNFTMetadata = async (watchData) => {
 
     try {
       console.log("Attempting quick metadata upload to IPFS...");
-      
+
       // Set a promise race with manual timeout
       const uploadPromise = uploadMetadataToPinata(metadata);
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Manual timeout after 15 seconds')), 15000)
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error("Manual timeout after 15 seconds")),
+          15000
+        )
       );
 
       metadataIpfsHash = await Promise.race([uploadPromise, timeoutPromise]);
       metadataURI = `ipfs://${metadataIpfsHash}`;
       console.log("Metadata uploaded to IPFS:", metadataURI);
-
     } catch (metadataError) {
       console.warn("IPFS metadata upload failed quickly, using local fallback");
 
@@ -613,8 +639,12 @@ const generateWatchNFTMetadata = async (watchData) => {
         metadata: metadataIpfsHash,
         image: imageIpfsHash,
       },
-      isLocalFallback: metadataIpfsHash.startsWith("LOCAL_") || imageIpfsHash.startsWith("LOCAL_"),
-      storageProvider: metadataIpfsHash.startsWith("LOCAL_") ? "Local with IPFS Fallback" : "Pinata IPFS",
+      isLocalFallback:
+        metadataIpfsHash.startsWith("LOCAL_") ||
+        imageIpfsHash.startsWith("LOCAL_"),
+      storageProvider: metadataIpfsHash.startsWith("LOCAL_")
+        ? "Local with IPFS Fallback"
+        : "Pinata IPFS",
     };
   } catch (error) {
     console.error("Error generating NFT metadata:", error);
@@ -638,11 +668,11 @@ app.get("/test-railway-ipfs", async (req, res) => {
 
     // Test with very short timeout
     const startTime = Date.now();
-    
+
     try {
       const result = await uploadMetadataToPinata(testData);
       const endTime = Date.now();
-      
+
       res.json({
         success: true,
         message: "Railway IPFS test successful",
@@ -653,14 +683,15 @@ app.get("/test-railway-ipfs", async (req, res) => {
       });
     } catch (error) {
       const endTime = Date.now();
-      
+
       res.json({
         success: false,
         message: "Railway IPFS test failed",
         duration: `${endTime - startTime}ms`,
         error: error.message,
         errorCode: error.code,
-        isTimeout: error.code === 'ECONNABORTED' || error.message.includes('timeout'),
+        isTimeout:
+          error.code === "ECONNABORTED" || error.message.includes("timeout"),
       });
     }
   } catch (error) {
