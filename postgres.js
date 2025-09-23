@@ -78,8 +78,62 @@ app.use((req, res, next) => {
   console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
   next();
 });
+app.use(
+  "/file",
+  (req, res, next) => {
+    console.log(`File request: ${req.path}`);
+    next();
+  },
+  express.static(path.join(__dirname, "public/uploads"), {
+    setHeaders: (res, path, stat) => {
+      console.log(`Serving file: ${path}`);
+      res.set("Cache-Control", "public, max-age=3600");
+    },
+  })
+);
+app.get("/debug/files", (req, res) => {
+  const uploadDir = path.join(__dirname, "public/uploads");
 
-app.use("/file", express.static(path.join(__dirname, "public/uploads")));
+  const getDirectoryContents = (dir) => {
+    try {
+      if (!fs.existsSync(dir)) return { exists: false, files: [] };
+      const files = fs.readdirSync(dir);
+      return {
+        exists: true,
+        files: files.map((file) => ({
+          name: file,
+          size: fs.statSync(path.join(dir, file)).size,
+          fullPath: `/file/${path.relative(uploadDir, path.join(dir, file))}`,
+        })),
+      };
+    } catch (error) {
+      return { exists: false, error: error.message, files: [] };
+    }
+  };
+
+  const directories = {
+    profile: getDirectoryContents(path.join(uploadDir, "profile")),
+    "raw-material": getDirectoryContents(path.join(uploadDir, "raw-material")),
+    component: getDirectoryContents(path.join(uploadDir, "component")),
+    watch: getDirectoryContents(path.join(uploadDir, "watch")),
+    certifier: getDirectoryContents(path.join(uploadDir, "certifier")),
+  };
+
+  res.json({
+    uploadDirectory: uploadDir,
+    directories: directories,
+    totalFiles: Object.values(directories).reduce(
+      (sum, dir) => sum + dir.files.length,
+      0
+    ),
+    testUrls: [
+      `${req.protocol}://${req.get("host")}/file/profile/admin.png`,
+      `${req.protocol}://${req.get(
+        "host"
+      )}/file/profile/1755713914484-supplier.png`,
+    ],
+  });
+});
 // =============================================================================
 // ENHANCED PINATA FUNCTIONS WITH ERROR HANDLING
 // =============================================================================
